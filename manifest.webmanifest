@@ -1,0 +1,23 @@
+{
+  "name": "決めた瞬間はいつ？",
+  "short_name": "決めた瞬間",
+  "description": "回る点の時計で、押そうと思った瞬間を答える。リベットの実験を体験する1日5回",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f3efe4",
+  "theme_color": "#f3efe4",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
