@@ -72,6 +72,7 @@ button.sub:disabled,button.main:disabled{opacity:.45;cursor:default}
 .dial .orbit{fill:none;stroke:#ffffff1f;stroke-width:1.5}
 .dial .tk{stroke:#c9d3e6;stroke-width:1.2}.dial .tk5{stroke:#ffffff;stroke-width:2.6}
 .dial .nm{fill:#1d2a3f;font-size:12px;font-weight:700;text-anchor:middle;dominant-baseline:central;font-family:var(--f-body)}
+html.a11y-dark .dial .nm{fill:#eceae4} /* 暗い画面：数字は文字盤の外（カードの地）にあり、SVG は色の補正を受けないので明るくする */
 .dial .dot{fill:#ffd166;stroke:#fff;stroke-width:2}
 .dial .hub{fill:#c9d3e6}
 .dial .pmk{fill:#ffd166;stroke:#fff;stroke-width:2}
@@ -1561,7 +1562,7 @@ function load() {
   return GameStore.load(KEY, mem, {
     v: 1, fresh, tidy, doneOf, bookOf,
     bank: (s, r) => !!(s.gone && s.gone[r.id]) || bank(s, r),
-    after: (s) => { for (const m in s.runs) { const r = s.runs[m]; if (r && typeof r === "object" && s.gone && s.gone[r.id]) s.runs[m] = null; } },
+    after: (s, n, o) => { for (const m in s.runs) { const r = s.runs[m]; if (r && typeof r === "object" && s.gone && s.gone[r.id]) s.runs[m] = null; } logJoin(s, n, o); },
     // 同じ回の途中なら、まちがい・ヒントは両方を合わせ、測った差は先に測ったほうを残す
     join: (w, o) => {
       if (!(w.cur && o.cur && typeof w.cur === "object" && typeof o.cur === "object" && w.cur.i === o.cur.i && w.cur.tag === o.cur.tag && w.res.length === o.res.length)) return w;
@@ -1572,6 +1573,18 @@ function load() {
   });
 }
 const num = Core.num; // 共通部品 game-core（配列・true を数にしない #410）
+// 記録帳の差（log）と測った回数（n）を2つの写しで合わせる。log の3つ目は1回の印（回の id:何回目）。
+// 古い写し o で、新しい写し n にある最後の印より後ろの回は n に入っていない（保存に失敗したタブで測った）ので足し、n もその数だけ足す（片方の測定を落とさない）
+function logJoin(s, n, o) {
+  const nl = Array.isArray(n.log) ? n.log : [], ol = Array.isArray(o.log) ? o.log : [], idOf = (x) => (Array.isArray(x) && typeof x[2] === "string" ? x[2] : null);
+  const have = new Set(nl.map(idOf).filter(Boolean));
+  let k = -1; ol.forEach((x, j) => { if (have.has(idOf(x))) k = j; });
+  if (k < 0 && nl.length >= 300) return; // 重なる印が無く n が満ちていれば、o の回が新しいか切り捨てた古い回かわからない
+  const extra = ol.slice(k + 1).filter((x) => idOf(x) && !have.has(idOf(x)));
+  if (!extra.length) return;
+  s.log = [...nl, ...extra].slice(-300);
+  s.n = Math.max(num(o.n), num(n.n) + extra.length);
+}
 // 終えた回の id を覚える（保存に失敗しても、合わせるときに終えた回を戻さない）。古いものから捨てて30まで
 function endRun(s, id) { if (typeof id !== "string") return; const g = s.gone && typeof s.gone === "object" && !Array.isArray(s.gone) ? s.gone : {}; g[id] = 1; const ks = Object.keys(g); for (const k of ks.slice(0, Math.max(0, ks.length - 30))) delete g[k]; s.gone = g; }
 const okMs = (v) => Number.isInteger(v) && Math.abs(v) <= G.PERIOD / 2;
@@ -1579,12 +1592,12 @@ const okD = (d) => !!d && typeof d === "object" && Number.isFinite(d.a) && d.a >
 // 引き継ぎコードなどから入った値を正しい形に直す（数の所に文字が入っていても画面に出さない）
 function tidy(s) {
   s.ebest = num(s.ebest); s.n = num(s.n);
-  s.log = Array.isArray(s.log) ? s.log.filter((x) => Array.isArray(x) && (x[0] === "W" || x[0] === "M") && okMs(x[1])).slice(-300) : [];
+  s.log = Array.isArray(s.log) ? s.log.filter((x) => Array.isArray(x) && (x[0] === "W" || x[0] === "M") && okMs(x[1])).map((x) => (typeof x[2] === "string" && x[2].length <= 40 ? [x[0], x[1], x[2]] : [x[0], x[1]])).slice(-300) : [];
   if (!s.gone || typeof s.gone !== "object" || Array.isArray(s.gone)) s.gone = {}; else { const g = {}; for (const k of Object.keys(s.gone).slice(-30)) if (s.gone[k] === 1) g[k] = 1; s.gone = g; }
   for (const q of ["days", "hdays", "adays", "dex", "runs", "kofi", "ach"]) if (!s[q] || typeof s[q] !== "object" || Array.isArray(s[q])) s[q] = {};
   for (const k in s.dex) if (Object.prototype.hasOwnProperty.call(G.QBY, k)) s.dex[k] = num(s.dex[k]); else delete s.dex[k];
   const okDate = (v) => { if (typeof v !== "string" || !/^\d{4}-\d\d-\d\d$/.test(v)) return false; const t = Date.parse(v + "T00:00:00Z"); return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === v; };
-  const okRec = (x) => !!x && typeof x === "object" && Array.isArray(x.m) && x.m.every((v) => Number.isInteger(v) && v >= 0) && Array.isArray(x.k) && x.k.length === x.m.length && x.k.every((v) => v === "W" || v === "M") && Array.isArray(x.d) && x.d.length === x.m.length && x.d.every(okMs);
+  const okRec = (x) => !!x && typeof x === "object" && Array.isArray(x.m) && x.m.every((v) => Number.isInteger(v) && v >= 0) && Array.isArray(x.k) && x.k.length === x.m.length && x.k.every((v) => v === "W" || v === "M") && Array.isArray(x.d) && x.d.length === x.m.length && x.d.every(okMs) && x.m.length === 5; // 今日の5回・上級・あとからは、どれも5回
   for (const b of [s.days, s.hdays, s.adays]) for (const d in b) if (!okDate(d) || !okRec(b[d])) delete b[d];
   for (const m in s.runs) {
     const r = s.runs[m]; if (r === null) continue;
@@ -1597,8 +1610,8 @@ function tidy(s) {
 }
 // 保存できないあいだは帯を出したままにし、保存できたら消す（routines/game-dev.md「共通の形」の記録）
 function saveWarn(on) { let b = document.getElementById("savewarn"); if (!on) { if (b) b.remove(); return; } if (b) return; b = document.createElement("div"); b.id = "savewarn"; b.setAttribute("role", "status"); b.textContent = "この端末に記録を保存できませんでした。ページを開き直すと、いまの記録が消えます"; b.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:9999;padding:8px 12px;background:#fff3cd;color:#000;font-size:15px;line-height:1.5;text-align:center;pointer-events:none;border-bottom:2px solid #8a6d00"; (document.body || document.documentElement).appendChild(b); }
-// 保存の前に読み直す（別のタブで進めた記録を消さない）
-function save(fn) { const s = load(); fn(s); s.t = Math.max(Date.now(), (s.t || 0) + 1); const j = JSON.stringify(s); try { localStorage.setItem(KEY, j); mem = null; saveWarn(false); } catch (e) { mem = j; saveWarn(true); } return s; }
+// 保存の前に読み直す（別のタブで進めた記録を消さない）。書いたあと読み返して同じでなければ（引き継ぎのあとの古いタブなど、書かずに戻ったとき）mem に残す
+function save(fn) { const s = load(); fn(s); s.t = Math.max(Date.now(), (s.t || 0) + 1); const j = JSON.stringify(s); try { localStorage.setItem(KEY, j); if (localStorage.getItem(KEY) !== j) throw new Error("not saved"); mem = null; saveWarn(false); } catch (e) { mem = j; saveWarn(true); } return s; }
 function streak(days) { return Core.streak(days); } // 続けて遊んだ日数（共通部品 game-core。壊れた記録・constructor などの名前を日に数えない）
 // part:playedDays:begin（shared-workflows の template/parts/index/playedDays.js の写し。ここでは直さない。node scripts/sync-template.mjs で写す）
 const playedDays = (s) => new Set([...Object.keys(s.days), ...Object.keys(s.adays)]).size;
@@ -1780,7 +1793,7 @@ const same = (r) => r && cur && r.date === cur.date && r.id === cur.id && r.res.
 // まちがえた・ヒントを使ったその時に復習へ入れる（とことんで降りる・閉じるなど、解き終えずにやめても残る）
 function early() { if (cur && !cur.done && ((cur.wrong && cur.wrong.length) || cur.hints)) Depth.mark(cur.tag, 1, cur.P.name); }
 // 途中の保存：別のタブで使ったヒント・まちがいも減らさない。keep は保存した回が同じ回のときだけ early する。別のタブで2段目へ進んでいたら、この画面も2段目にする
-function keep() { let ok = false; const st0 = cur.step; save((s) => { const r = s.runs[MODE]; if (!same(r)) return; ok = true; const was = r.cur && r.cur.i === cur.i && r.cur.tag === cur.tag ? r.cur : { wrong: [], hints: 0 }; cur.hints = Math.max(cur.hints, was.hints || 0); for (const w of was.wrong || []) if (!cur.wrong.includes(w)) cur.wrong.push(w); if (was.d && !cur.d) cur.d = was.d; if (cur.d && was.step === 2) cur.step = 2; if (!cur.jd && was.jd) cur.jd = was.jd; r.cur = { i: cur.i, tag: cur.tag, wrong: cur.wrong.slice(), hints: cur.hints, step: cur.step, jd: cur.jd, d: cur.d }; }); if (ok) early(); if (ok && cur.step === 2 && st0 !== 2) { const c0 = cur; setTimeout(() => { if (cur === c0 && !cur.done && cur.step === 2) askWhy(); }, 0); } }
+function keep() { let ok = false; const st0 = cur.step; save((s) => { const r = s.runs[MODE]; if (!same(r)) return; ok = true; const was = r.cur && r.cur.i === cur.i && r.cur.tag === cur.tag ? r.cur : { wrong: [], hints: 0 }; cur.hints = Math.max(cur.hints, was.hints || 0); for (const w of was.wrong || []) if (!cur.wrong.includes(w)) cur.wrong.push(w); if (was.d) cur.d = was.d; /* 別のタブで先に測った差を残す（両方の画面と結果で同じ差） */ if (cur.d && was.step === 2) cur.step = 2; if (!cur.jd && was.jd) cur.jd = was.jd; r.cur = { i: cur.i, tag: cur.tag, wrong: cur.wrong.slice(), hints: cur.hints, step: cur.step, jd: cur.jd, d: cur.d }; }); if (ok) early(); if (ok && cur.step === 2 && st0 !== 2) { const c0 = cur; setTimeout(() => { if (cur === c0 && !cur.done && cur.step === 2) askWhy(); }, 0); } }
 const missOf = () => cur.wrong.length + cur.hints;
 function play(stay) {
   Core.screens.mark("play"); // 「戻る」でホームへ（sync-template の migrateBack）
@@ -1949,8 +1962,9 @@ function choose(j) {
 }
 function solved() {
   cur.done = true; buzz([10, 40, 10]);
-  const P = cur.P, d = cur.d, logged = !["p"].includes(MODE);
-  const s = save((s) => { const r = s.runs[MODE]; if (!same(r)) return; const was = r.cur && r.cur.i === cur.i && r.cur.tag === cur.tag ? r.cur : null; if (was) { cur.hints = Math.max(cur.hints, was.hints || 0); for (const w of was.wrong || []) if (!cur.wrong.includes(w)) cur.wrong.push(w); } r.res.push({ m: missOf(), k: P.kind, d: d.ms }); r.cur = null; s.dex[P.qid] = (s.dex[P.qid] || 0) + 1; if (logged) { s.n = (s.n || 0) + 1; s.log.push([P.kind, d.ms]); s.log = s.log.slice(-300); } }); // 別のタブで使ったヒント・まちがいも合わせてから数える
+  const P = cur.P, logged = !["p"].includes(MODE);
+  const s = save((s) => { const r = s.runs[MODE]; if (!same(r)) return; const was = r.cur && r.cur.i === cur.i && r.cur.tag === cur.tag ? r.cur : null; if (was) { cur.hints = Math.max(cur.hints, was.hints || 0); for (const w of was.wrong || []) if (!cur.wrong.includes(w)) cur.wrong.push(w); if (was.d) cur.d = was.d; } r.res.push({ m: missOf(), k: P.kind, d: cur.d.ms }); r.cur = null; s.dex[P.qid] = (s.dex[P.qid] || 0) + 1; if (logged) { s.n = (s.n || 0) + 1; s.log.push([P.kind, cur.d.ms, cur.id + ":" + cur.i]); s.log = s.log.slice(-300); } }); // 別のタブで使ったヒント・まちがい・先に測った差も合わせてから数える
+  const d = cur.d;
   const m = missOf(), st = starsOf(m);
   Depth.mark(cur.tag, m, P.name); // まちがい・ヒントがあれば復習へ、復習中なら次の間へ
   const r = s.runs[MODE], fin = r && r.mode !== "e" && r.res.length >= r.list.length, ref = P.kind === "W" ? G.LIBET.W : G.LIBET.M;
@@ -2009,7 +2023,9 @@ function endFinish(run) {
 }
 // 論文の数字とあなたの平均を、1本の時間の線に並べる（準備電位は脳波なので、このゲームでは測れない。論文の数字だけ）
 function timeline(w, mm) {
-  const L0 = -1100, L1 = 300, X0 = 8, X1 = 332, X = (v) => +(X0 + ((Math.max(L0, Math.min(L1, v)) - L0) / (L1 - L0)) * (X1 - X0)).toFixed(1);
+  // 線の範囲は、あなたの平均とばらつきが入るまで広げる（端に丸めて、ちがう値に見せない）
+  const ends = [w, mm].filter((x) => x && x.n).flatMap((x) => [x.mean - x.sd, x.mean + x.sd]);
+  const L0 = Math.min(-1100, Math.floor(Math.min(...ends, 0) / 100) * 100), L1 = Math.max(300, Math.ceil(Math.max(...ends, 0) / 100) * 100), X0 = 8, X1 = 332, X = (v) => +(X0 + ((Math.max(L0, Math.min(L1, v)) - L0) / (L1 - L0)) * (X1 - X0)).toFixed(1);
   const rows = [
     ["rp1", "準備電位 type I（論文・脳波）", G.LIBET.RP1, "bar"],
     ["rp2", "準備電位 type II（論文・脳波）", G.LIBET.RP2, "bar"],
@@ -2020,7 +2036,7 @@ function timeline(w, mm) {
   if (mm && mm.n) rows.push(["ym", `あなたの M（${mm.n}回）`, mm.mean, "sq", mm.sd]);
   const RH = 40, H = 30 + rows.length * RH;
   let g = `<line x1="${X(0)}" y1="10" x2="${X(0)}" y2="${H - 18}" class="zero"/>`;
-  for (const v of [-1000, -500, 0]) g += `<text x="${X(v)}" y="${H - 4}" class="ax">${v === 0 ? "0" : `${v}`}</text>`;
+  for (const v of [-1000, -500, 0, 500, 1000].filter((x) => x >= L0 && x <= L1 - 150)) g += `<text x="${X(v)}" y="${H - 4}" class="ax">${v === 0 ? "0" : `${v}`}</text>`;
   rows.forEach(([id, name, v, shape, sd], j) => {
     const y = 22 + j * RH, cy = y + 16;
     g += `<text x="${X0}" y="${y + 2}" class="rl">${esc(name)}：${msStr(v)}</text>`;
@@ -2175,7 +2191,7 @@ function about() {
 // スペースキーで押す（ボタンにフォーカスが無くても、回っているあいだだけ）
 document.addEventListener("keydown", (e) => { if (ph === "spin" && (e.key === " " || e.code === "Space") && $("press") && !$("press").disabled && document.activeElement !== $("press")) { e.preventDefault(); if (!e.repeat) press(e.timeStamp); } });
 
-window.__km = { sureCount: (ok) => sureCount(ok), setMem: (j) => { mem = j; }, mode: () => MODE, load, save, todayKey, dayNo, lateDays, ACH, achGot, nextAch, tally, shareText, streak, endlessList, moreList, TIPS, cur: () => cur, ph: () => ph, press: (ts) => press(ts), pressPos: () => pressPos, t0: () => t0, play: (m) => { if (m) MODE = m; play(); }, home, cal, book, about, EPOCH, KEY, G, start: startRun, setMore: (f) => { const o = moreHook; moreHook = f; return o; } };
+window.__km = { timeline, sureCount: (ok) => sureCount(ok), setMem: (j) => { mem = j; }, mode: () => MODE, load, save, todayKey, dayNo, lateDays, ACH, achGot, nextAch, tally, shareText, streak, endlessList, moreList, TIPS, cur: () => cur, ph: () => ph, press: (ts) => press(ts), pressPos: () => pressPos, t0: () => t0, play: (m) => { if (m) MODE = m; play(); }, home, cal, book, about, EPOCH, KEY, G, start: startRun, setMore: (f) => { const o = moreHook; moreHook = f; return o; } };
 home();
 if ("serviceWorker" in navigator && location.protocol === "https:" && /github\.io$/.test(location.hostname)) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>

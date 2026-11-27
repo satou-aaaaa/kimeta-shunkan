@@ -41,7 +41,8 @@
     ["f19", "type II の準備電位は、筋肉が動く約何ミリ秒前に始まった？", ["約550ミリ秒前", "約55ミリ秒前", "約5500ミリ秒前"], "W の約200ミリ秒に、約350ミリ秒を足す。", "type II の始まりは平均約−550ミリ秒。W（約−200）のさらに約350ミリ秒前。", L],
   ];
   const msOf = (n) => Math.round((n * PERIOD) / TICKS);
-  const Q = FACTS.map(([id, q, opts, look, why, src]) => ({ id, q, opts, ans: opts[0], look, why, src, g: "f" }));
+  // 公開したあとに足す問いは、7つ目に使い始める日（since。日本時間の YYYY-MM-DD）を書く。その日より前の今日の5回・上級は、足す前の問いだけから選ぶ（過去の日を変えない）
+  const Q = FACTS.map(([id, q, opts, look, why, src, since]) => ({ id, q, opts, ans: opts[0], look, why, src, g: "f", ...(since ? { since } : {}) }));
   // 計算の問い（1周 2560 ミリ秒・60目盛りから。答えは msOf、ちがう選び肢は「1周1秒」「1周60秒」とまちがえた時の数）
   for (let n = 1; n <= 30; n++) Q.push({ id: "t" + String(n).padStart(2, "0"), g: "t", q: `点が ${n} 目盛り進むのに、約何ミリ秒かかる？`, opts: [`約${msOf(n)}ミリ秒`, `約${Math.round((n * 1000) / TICKS)}ミリ秒`, `約${n * 1000}ミリ秒`], look: "1周2560ミリ秒・60目盛り。", why: `2560 × ${n} ÷ 60 ≒ ${msOf(n)}。`, src: L });
   for (let n = 1; n <= 25; n++) Q.push({ id: "b" + String(n).padStart(2, "0"), g: "b", q: `答えた位置が、押した時の点より ${n} 目盛り手前。差は？`, opts: [`−${msOf(n)}ミリ秒（押す前）`, `＋${msOf(n)}ミリ秒（押したあと）`, `−${Math.round((n * 1000) / TICKS)}ミリ秒（押す前）`], look: "手前＝点がそれより前に通った所。そこならマイナス。", why: `${n}目盛り × 約42.7 ≒ ${msOf(n)}ミリ秒。手前なのでマイナス（押す前）。`, src: L });
@@ -84,14 +85,14 @@
   const IDS = Q.map((x) => x.id);
   // 今日の5回（W・W・W・M・W。4回目は「押した瞬間」のくらべの回）。問いは 論文・論文・計算・計算（差）・論文 の順で、重ねない。だれでも同じ
   const DKINDS = ["W", "W", "W", "M", "W"], DGRPS = ["f", "f", "t", "b", "f"], HGRPS = ["f", "t", "f", "b", "f"];
-  const pickQ = (R, grps, used) => grps.map((g) => { const c = IDS.filter((x) => QBY[x].g === g && !used.has(x)); const q = c[ri(R, 0, c.length - 1)]; used.add(q); return q; });
+  const pickQ = (R, grps, used, date) => grps.map((g) => { const c = IDS.filter((x) => QBY[x].g === g && !used.has(x) && !(QBY[x].since > date)); const q = c[ri(R, 0, c.length - 1)]; used.add(q); return q; });
   function dailyTags(date) {
-    const R = rng(seedOf("day:" + date)), qs = pickQ(R, DGRPS, new Set());
+    const R = rng(seedOf("day:" + date)), qs = pickQ(R, DGRPS, new Set(), date);
     return DKINDS.map((k, i) => `${k}|${qs[i]}|${ri(R, 0, TICKS - 1)}`);
   }
   // 上級：目盛りだけの文字盤で W を5回。今日の5回と問いを重ねない
   function hardTags(date) {
-    const used = new Set(dailyTags(date).map((t) => t.split("|")[1])), R = rng(seedOf("hard:" + date)), qs = pickQ(R, HGRPS, used);
+    const used = new Set(dailyTags(date).map((t) => t.split("|")[1])), R = rng(seedOf("hard:" + date)), qs = pickQ(R, HGRPS, used, date);
     return qs.map((q) => `W|${q}|${ri(R, 0, TICKS - 1)}`);
   }
   // 種から n 回分（練習・とことん）。問いは全部出し切るまで重ねない（seen に入れた問いは使わない）。kinds は "W"・"M"・"X"（まぜる。W を多めに）

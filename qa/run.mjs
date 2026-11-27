@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import vm from "node:vm";
 import { checkTransfer } from "./transfer-check.mjs";
 import { checkSwStall } from "./sw-check.mjs";
 import { checkDepth } from "./depth-check.mjs";
@@ -24,7 +25,7 @@ const G = createRequire(import.meta.url)(path.join(root, "data.js"));
 // 論文の数字（ゲームとは別に書く。Libet ほか 1983 の本文・Table 2、Schurger ほか 2012）。出典メモは shared-workflows の games/kimeta-shunkan-research.md
 const PAPER = { period: 2560, ticks: 60, coast: [500, 800], W: -204, M: -86, S: -47, RP2: -550, RP1: -1025, W2RP2: 350, W2RP1: 800, N: 40 };
 check("時計は論文と同じ（1周2560ミリ秒・60目盛り・押したあと500〜800ミリ秒回る）", G.PERIOD === PAPER.period && G.TICKS === PAPER.ticks && G.COAST[0] === PAPER.coast[0] && G.COAST[1] === PAPER.coast[1]);
-check("論文の数字（W −204・M −86・S −47・type II −550・type I −1025・W との差 350・800・40回）が出典メモと同じ", Object.keys(G.LIBET).every((k) => G.LIBET[k] === PAPER[k]), JSON.stringify(G.LIBET));
+check("論文の数字（W −204・M −86・S −47・type II −550・type I −1025・W との差 350・800・40回）が出典メモと同じ", ["W", "M", "S", "RP2", "RP1", "W2RP2", "W2RP1", "N"].every((k) => Object.prototype.hasOwnProperty.call(G.LIBET, k) && G.LIBET[k] === PAPER[k]) && Object.keys(G.LIBET).every((k) => G.LIBET[k] === PAPER[k]), JSON.stringify(G.LIBET)); // 必ず要るキーは PAPER の側から数える（LIBET から消しても通らない）
 check("type II の準備電位は W のさらに約350ミリ秒前（−200 −350 ＝ −550）", -200 - PAPER.W2RP2 === PAPER.RP2);
 // 差の解き直し：角度で考える（data.js の diffMs は剰余で考える）。ちょうど半周は data.js と同じく押す前（−1280）に数える
 const angDiff = (a, p) => { const th = (a - p) * (2 * Math.PI / 60); const d = Math.atan2(Math.sin(th), Math.cos(th)); let t = d / (2 * Math.PI) * 60; if (Math.abs(Math.abs(t) - 30) < 1e-9) t = -30; return Math.round(t * 2560 / 60); };
@@ -70,6 +71,14 @@ check("作れない tag を弾く（00・余分な文字・知らない問い・
 // 公開したあとは過去の日の5回が変わらない（F7）。変えるときは作り直して理由を PR に書く
 const PINS = "2026-11-27=W|f08|22,W|f19|49,W|t07|12,M|b08|29,W|f15|45;W|f18|5,W|t23|43,W|f05|23,W|b20|14,W|f04|31\n2026-12-25=W|f06|39,W|f09|54,W|t27|9,M|b05|29,W|f08|51;W|f13|0,W|t10|45,W|f03|1,W|b09|0,W|f02|56\n2027-06-01=W|f03|20,W|f16|36,W|t15|41,M|b15|44,W|f05|36;W|f08|43,W|t21|45,W|f07|6,W|b13|13,W|f17|38";
 check("過去の日の5回と上級が変わらない（PINS。game-dev.md F7）", PINS.split("\n").every((l) => { const [d, v] = l.split("="); return G.dailyTags(d).join(",") + ";" + G.hardTags(d).join(",") === v; }));
+// 問いを足しても過去の日が変わらない：使い始める日（since）を書いた問いを足した data.js を作り、PINS の日は同じ・since からは選ばれることを見る
+{ const src = readFileSync(path.join(root, "data.js"), "utf8"), row = '    ["f99", "足した問い", ["あ", "い", "う"], "見る", "わけ", L, "2030-01-01"],\n';
+  const add = src.replace(/(\n  \];\n  const msOf)/, "\n" + row.trimEnd() + "$1"), mod = { exports: {} };
+  vm.runInNewContext(add, { module: mod, self: undefined });
+  const H = mod.exports, pinsSame = !!H.QBY && !!H.QBY.f99 && PINS.split("\n").every((l) => { const [d, v] = l.split("="); return H.dailyTags(d).join(",") + ";" + H.hardTags(d).join(",") === v; });
+  let used = false, d = "2030-01-01"; for (let i = 0; i < 400 && !used; i++) { if ([...H.dailyTags(d), ...H.hardTags(d)].some((t) => t.includes("|f99|"))) used = true; d = new Date(Date.parse(d) + 864e5).toISOString().slice(0, 10); }
+  let early = false; d = "2026-11-27"; for (let i = 0; i < 1100; i++) { if ([...H.dailyTags(d), ...H.hardTags(d)].some((t) => t.includes("|f99|"))) early = true; d = new Date(Date.parse(d) + 864e5).toISOString().slice(0, 10); }
+  check("問いを最後に足しても（since 付き）、過去の日の5回と上級は変わらず、since の日から選ばれる", pinsSame && used && !early, `pins ${pinsSame}・since から ${used}・前に出た ${early}`); }
 // とことん・練習の並び：何百回作って、1回の中で問いを全部出し切るまで重ねない
 { const bad = []; let m = 0;
   for (let n = 0; n < 400; n++) {
@@ -87,7 +96,8 @@ const html = readFileSync(path.join(root, "index.html"), "utf8"), gen = readFile
 const own = html.replace(/<!-- a11y:begin[\s\S]*?a11y:end -->/, "").replace(/<!-- store:begin[\s\S]*?store:end -->/, "").replace(/<!-- core:begin[\s\S]*?core:end -->/, "").replace(/<!-- kiroku:begin[\s\S]*?kiroku:end -->/, "");
 const ext = [...html.matchAll(/(?:src|href)="(https?:[^"]+)"/g)].map((m) => m[1]).filter((u) => !/^https:\/\/fonts\.googleapis\.com(\/|$)/.test(u));
 check("外から読むのは文字（Google Fonts）だけ。スクリプト・広告・解析を入れない（出典のリンクは押したときに開くだけ）", ext.length === 0 && ![...html.matchAll(/<script[^>]+src="([^"]+)"/g)].some((m) => /^https?:/.test(m[1])), ext.join(","));
-check("CSP で通信先を自分だけにしている", /connect-src 'self'/.test(html) && !/connect-src[^;"]*https/.test(html));
+{ const cs = [...html.matchAll(/connect-src([^;"]*)/g)].map((m) => m[1].trim().split(/\s+/));
+  check("CSP で通信先を自分だけにしている（connect-src は 'self' 1つだけ）", cs.length === 1 && cs[0].length === 1 && cs[0][0] === "'self'", JSON.stringify(cs)); }
 check("押した時刻・答えを外へ送らない（fetch・sendBeacon・XMLHttpRequest を使わない）", !/\bfetch\(|sendBeacon|XMLHttpRequest|WebSocket/.test(own + gen));
 check("Math.random は練習・とことんの種だけ（今日の5回・上級は日付の乱数。data.js には無い）", (own.match(/Math\.random/g) || []).length === 1 && !/Math\.random/.test(gen));
 check("乱数は sort の比較の中で引かない", !/\.sort\(\s*\([^)]*\)\s*=>[^\n;]*\b(R|rng|rand|Math\.random)\s*\(/.test(html + gen));
@@ -99,7 +109,7 @@ check("乱数は sort の比較の中で引かない", !/\.sort\(\s*\([^)]*\)\s*
   check("言い方：遊び方・「このゲームについて」・README に、押した時刻と答えを外へ送らないことがある", local(howto) && local(ab) && local(readme));
   check("言い方：読み方が分かれていることを書き、「自由意志は無い」と言い切らない", /分かれて/.test(ab) && /分かれて/.test(tl) && !/自由意志は(無|な)い|自由意志は存在しない|脳が(すべて|全部)決めている/.test(own + gen + readme));
   check("言い方：W はボタンの約200ミリ秒前・準備電位はさらに約350ミリ秒前、を「このゲームについて」と結果の時間の線に並べる", /約200ミリ秒前/.test(ab) && /さらに約350ミリ秒前/.test(ab) && /約350ミリ秒/.test(tl) && /G\.LIBET\.RP2/.test(tl));
-  check("言い方：このゲームの0（ボタン）と論文の0（筋肉の電気）がちがうことを書く", /筋肉の電気/.test(ab) && /0は、ボタン/.test(ab));
+  check("言い方：このゲームの0（ボタン）と論文の0（筋肉の電気）がちがうことを「このゲームについて」と README に書く", /筋肉の電気/.test(ab) && /0は、ボタン/.test(ab) && /論文の0は筋肉の電気/.test(readme) && /ゲームの0はボタン/.test(readme));
   check("出典：「このゲームについて」に Libet ほか 1983 と Schurger ほか 2012（題名・年・DOI）", /G\.SRC/.test(ab) && /const SRC = \{\s*libet: \["Libet, Gleason, Wright, Pearl「Time of conscious intention to act[^"]*」Brain 106 \(1983\) 623–642", "https:\/\/doi\.org\/10\.1093\/brain\/106\.3\.623"\],\s*schurger: \["Schurger, Sitt, Dehaene「An accumulator model[^"]*」PNAS 109 \(2012\)[^"]*", "https:\/\/doi\.org\/10\.1073\/pnas\.1210467109"\],/.test(gen)); }
 check("写し元（屋台の値下げ合戦・その写し元の風力階級よみ）の言葉が残っていない（game-dev.md A 手順5）", !/屋台|値下げ|性格帳|縁日|団子|みどり屋|しっぺ返し|Axelrod|アクセルロッド|囚人|もうけ点|ytn|YTN|yatai|__nm|風力|風速|気象庁|fuuryoku|fry-/.test(own + gen + readme + readFileSync(path.join(root, "manifest.webmanifest"), "utf8") + readFileSync(path.join(root, ".github/ISSUE_TEMPLATE/feedback.yml"), "utf8") + readFileSync(path.join(root, "tools/make-og.cjs"), "utf8") + readFileSync(path.join(root, "tools/make-icons.cjs"), "utf8"))); // AGENTS.md は写し元の名前を書くので見ない
 check("手で書く所がこのゲームの言葉（description・遊び方・ホームの1行目・2段目の名前・manifest・感想フォームの例）", /<meta name="description" content="1周2\.56秒で回る点の時計/.test(html) && /<dialog id="howto"[\s\S]*1周2\.56秒[\s\S]*<\/dialog>/.test(html) && /回る点を見て、好きなときに押す。/.test(own) && /2段目：実験を読む/.test(own) && /リベットの実験/.test(JSON.parse(readFileSync(path.join(root, "manifest.webmanifest"), "utf8")).description) && /押そうと思った/.test(readFileSync(path.join(root, ".github/ISSUE_TEMPLATE/feedback.yml"), "utf8")));
@@ -178,13 +188,14 @@ await p.click("#go-d"); await p.waitForSelector("#spin");
 const day = G.dailyTags(TODAY);
 check("今日の5回：1回目は今日の tag・回す前は点が始まりの位置で止まっている", await p.evaluate(() => __km.cur().tag) === day[0] && await p.evaluate((st) => { const d = document.querySelector("#dial .dot"); return Math.abs(((Math.atan2(+d.getAttribute("cx") - 120, 120 - +d.getAttribute("cy")) / (2 * Math.PI)) * 60 + 60) % 60 - st) < 0.01 || st === 0; }, G.make(day[0]).start));
 check("回す画面：押せる所が44px以上・幅390pxではみ出さない", (await sizes(p)).length === 0 && !(await overflow(p)), JSON.stringify(await sizes(p)));
+const spinAt = Date.now(); // 回すを押す前から数える（押せるようになるまでの時間を、短く見積もらない）
 await p.click("#spin"); await p.waitForTimeout(400);
 await p.click("#press", { force: true }).catch(() => {}); await p.waitForTimeout(50);
 check("1周（2.56秒）まつまでは押せない（論文 p.625）", await p.evaluate(() => __km.ph()) === "spin" && await p.locator("#press[disabled]").count() === 1);
-const moved = await p.evaluate(async () => { const d = document.querySelector("#dial .dot"), a = +d.getAttribute("cx"); await new Promise((r) => setTimeout(r, 300)); return Math.abs(+d.getAttribute("cx") - a) + Math.abs(+d.getAttribute("cy") - a); });
+const moved = await p.evaluate(async () => { const d = document.querySelector("#dial .dot"), x = +d.getAttribute("cx"), y = +d.getAttribute("cy"); await new Promise((r) => setTimeout(r, 300)); return Math.abs(+d.getAttribute("cx") - x) + Math.abs(+d.getAttribute("cy") - y); });
 check("回しているあいだ点が動く", moved > 1);
-await p.waitForSelector("#press:not([disabled])", { timeout: 6000 });
-check("1周たつと押せる（押すまで待つ。時間制限なし）", await p.locator("#press:not([disabled])").count() === 1);
+const unlockMs = await p.evaluate(async (t0) => { const b = document.getElementById("press"); while (b.disabled) await new Promise((r) => setTimeout(r, 10)); return Date.now() - t0; }, spinAt);
+check("1周たつと押せる（回してから2.56秒より前には押せない。押すまで待つ。時間制限なし）", await p.locator("#press:not([disabled])").count() === 1 && unlockMs >= 2560 && unlockMs < 6000, `${unlockMs}ms`);
 await p.waitForTimeout(1500);
 check("押せるようになってから時間がたっても、待ち続ける", await p.evaluate(() => __km.ph()) === "spin");
 // 押した時刻の点の位置 ＝ そのとき画面に描いた点の位置（1こま＝16.7ミリ秒 ≒ 0.4目盛り以内）
@@ -244,7 +255,8 @@ await p.waitForSelector("#wmean");
 { const s = await mem(p), rec = s.days[TODAY];
   check("今日の5回の記録：まちがい＋ヒント（0・1・3・0・0）・種類・差が残る・測った回数と記録帳の差に入る", rec && rec.m.join() === "0,1,3,0,0" && rec.k.join("") === "WWWMW" && rec.d.length === 5 && s.n === 5 && s.log.length === 5, JSON.stringify(rec));
   const ws = G.stats(rec.d.filter((_, j) => rec.k[j] === "W"));
-  check("結果：W の平均とばらつき（4回）を出す", (await p.textContent("#wmean")).includes(String(Math.abs(ws.mean))) && (await p.textContent("#wsd")).includes(`${ws.sd}ミリ秒`), await p.textContent("#wmean"));
+  const signed = `${ws.mean > 0 ? "＋" : ws.mean < 0 ? "−" : "±"}${Math.abs(ws.mean)}ミリ秒`; // 符号も見る（押す前と押したあとを取りちがえない）
+  check("結果：W の平均とばらつき（4回）を出す", (await p.textContent("#wmean")).includes(signed) && (await p.textContent("#wsd")).includes(`${ws.sd}ミリ秒`), await p.textContent("#wmean"));
   const tl = await p.textContent("#tl");
   check("結果：時間の線に、準備電位 type I・type II・論文の W・M と、あなたの W・M を並べ、準備電位は測れないと書く", /type I/.test(tl) && /type II/.test(tl) && /−1025/.test(tl) && /−550/.test(tl) && /あなたの W（4回）/.test(tl) && /あなたの M（1回）/.test(tl) && /測れません/.test(tl), tl.slice(0, 200));
   check("結果：時間の線は形でも分ける（論文 ◆・あなたの W ●・M ■）", await p.locator("#tl .dia").count() === 1 && await p.locator("#tl .ydot").count() === 1 && await p.locator("#tl .ysq").count() === 1);
@@ -299,6 +311,38 @@ await p.close();
   await p2.reload(); await p2.waitForTimeout(150);
   const s = await p2.evaluate(() => __km.load());
   check("壊れた記録（形のちがう日・数でない物・合わない差）でもホームが出て、正しい形に直す", await p2.locator("#go-dex").count() === 1 && !s.days["2026-11-27"] && s.ebest === 0 && s.n === 0 && s.log.length === 1 && s.runs.d.cur.d === null && s.runs.d.cur.step === 1 && !("constructor" in s.dex && s.dex.constructor === 5), JSON.stringify(s).slice(0, 300));
+  // 5回そろっていない日の記録は取り込まない（ホームが終えた日と見て、結果が NaN になる）
+  await p2.evaluate(() => { localStorage.setItem("kms-v1", JSON.stringify({ v: 1, tut: true, days: { "2026-11-27": { m: [], k: [], d: [] }, "2026-11-28": { m: [0, 0], k: ["W", "W"], d: [-100, -100] }, "2026-11-29": { m: [0, 0, 0, 0, 0], k: ["W", "W", "W", "M", "W"], d: [-1, -2, -3, -4, -5] } } })); });
+  { const s = await p2.evaluate(() => __km.load()); check("日ごとの記録は5回そろったものだけ残す（空・2回の日は捨てる）", Object.keys(s.days).join() === "2026-11-29", Object.keys(s.days).join()); }
+  // 保存に失敗したタブ（mem）と、あとで保存したタブの記録帳の差を両方残す（回の印で合わせる）
+  { const r = await p2.evaluate(() => {
+      const base = { v: 1, tut: true, days: {}, hdays: {}, adays: {}, dex: {}, runs: {}, kofi: {}, ach: {}, ebest: 0 };
+      localStorage.setItem("kms-v1", JSON.stringify({ ...base, t: 2, n: 3, log: [["W", -100, "r1:0"], ["W", -120, "r1:1"], ["M", -50, "r2:0"]] }));
+      __km.setMem(JSON.stringify({ ...base, t: 1, n: 3, log: [["W", -100, "r1:0"], ["W", -120, "r1:1"], ["W", -140, "r1:2"]] }));
+      const a = __km.load();
+      __km.setMem(JSON.stringify({ ...base, t: 1, n: 3, log: [["W", -100, "r1:0"], ["W", -120, "r1:1"], ["M", -50, "r2:0"]] }));
+      const b = __km.load(); __km.setMem(null);
+      return { a: [a.n, a.log.map((x) => x[2]).join()], b: [b.n, b.log.length] };
+    });
+    check("保存に失敗したタブと、あとで保存したタブの測定を両方残す（記録帳の差と測った回数）", r.a[0] === 4 && r.a[1] === "r1:0,r1:1,r2:0,r1:2" && r.b[0] === 3 && r.b[1] === 3, JSON.stringify(r)); }
+  // 書いたのに残っていない（引き継ぎのあとの古いタブで書かずに戻るなど）ときは、保存できたことにしない
+  { const r = await p2.evaluate(() => { localStorage.setItem("kms-v1", JSON.stringify({ v: 1, tut: true })); const o = Storage.prototype.setItem; Storage.prototype.setItem = function (k, v) { if (k === "kms-v1") return; return o.call(this, k, v); }; __km.save((s) => { s.ebest = 9; }); Storage.prototype.setItem = o; const kept = __km.load().ebest === 9, warn = !!document.getElementById("savewarn"); __km.save(() => {}); return { kept, warn, after: !document.getElementById("savewarn") && JSON.parse(localStorage.getItem("kms-v1")).ebest === 9 }; });
+    check("書いても残っていなければ、手元の写し（mem）を消さずに帯を出し、次に書けたら残す", r.kept && r.warn && r.after, JSON.stringify(r)); }
+  // 結果の時間の線：線の外の平均も端に丸めない（＋640 と ＋300 が同じ所に描かれない）
+  { const r = await p2.evaluate(() => [640, -1250, 1280].map((v) => { const d = document.createElement("div"); d.innerHTML = __km.timeline({ n: 1, mean: v, sd: 0 }, null); return [v, +d.querySelector(".ydot").getAttribute("cx"), +d.querySelector(".zero").getAttribute("x1")]; }));
+    check("結果の時間の線：線の外にある平均は、線を広げて描く（両端 8・332 に丸めない）", r.every(([v, x, z]) => x > 8 && x < 332 && (v > 0 ? x > z : x < z)), JSON.stringify(r)); }
+  // 暗い画面：文字盤の数字（カードの地の上）を明るくする
+  { await p2.evaluate(() => { localStorage.setItem("kms-v1", JSON.stringify({ v: 1, tut: true })); A11y.set("theme", 2); __km.home(); document.getElementById("go-p").click(); document.querySelector(".lv button").click(); }); await p2.waitForTimeout(200);
+    const f = await p2.evaluate(() => getComputedStyle(document.querySelector("#dial .nm")).fill); await p2.evaluate(() => A11y.set("theme", 0));
+    check("暗い画面：文字盤の数字を明るい色にする", f === "rgb(236, 234, 228)", f); }
+  // 別のタブで先に測った差があれば、それを使う（この画面と結果で同じ差）
+  { await p2.evaluate(() => { localStorage.setItem("kms-v1", JSON.stringify({ v: 1, tut: true })); __km.home(); document.getElementById("go-p").click(); document.querySelector(".lv button").click(); });
+    await p2.waitForTimeout(150); await measure(p2, -2);
+    const want = await p2.evaluate(() => { const c = __km.cur(), a = (c.d.a + 10) % 60, d = { a, p: c.d.p, ms: __km.G.diffMs(a, c.d.p) }; __km.save((s) => { s.runs[__km.mode()].cur.d = d; }); return d.ms; });
+    await p2.click("#hint"); await p2.waitForTimeout(100);
+    const shown = await p2.evaluate(() => __km.cur().d.ms); await answer(p2);
+    const got = await p2.evaluate(() => { const r = __km.load().runs[__km.mode()]; return r.res[r.res.length - 1].d; });
+    check("別のタブで先に測った差があれば、この画面も結果もその差を使う", shown === want && got === want, `${want} ${shown} ${got}`); }
   // 保存できないとき：帯を出したままにし、保存できたら消す
   await p2.evaluate(() => { localStorage.setItem("kms-v1", JSON.stringify({ v: 1, tut: true })); window.__set = Storage.prototype.setItem; Storage.prototype.setItem = function (k, v) { if (k === "kms-v1") throw new Error("full"); return window.__set.call(this, k, v); }; __km.home(); document.getElementById("go-p").click(); document.querySelector(".lv button").click(); });
   await p2.waitForTimeout(2500);
