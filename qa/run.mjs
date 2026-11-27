@@ -188,13 +188,13 @@ await p.click("#go-d"); await p.waitForSelector("#spin");
 const day = G.dailyTags(TODAY);
 check("今日の5回：1回目は今日の tag・回す前は点が始まりの位置で止まっている", await p.evaluate(() => __km.cur().tag) === day[0] && await p.evaluate((st) => { const d = document.querySelector("#dial .dot"); return Math.abs(((Math.atan2(+d.getAttribute("cx") - 120, 120 - +d.getAttribute("cy")) / (2 * Math.PI)) * 60 + 60) % 60 - st) < 0.01 || st === 0; }, G.make(day[0]).start));
 check("回す画面：押せる所が44px以上・幅390pxではみ出さない", (await sizes(p)).length === 0 && !(await overflow(p)), JSON.stringify(await sizes(p)));
-const spinAt = Date.now(); // 回すを押す前から数える（押せるようになるまでの時間を、短く見積もらない）
+await p.evaluate(() => { window.__spinAt = performance.now(); }); // 回すを押す前から、ページの中の同じ時計（performance.now。QA_DATE でずらさない）で数える（短く見積もらない）
 await p.click("#spin"); await p.waitForTimeout(400);
 await p.click("#press", { force: true }).catch(() => {}); await p.waitForTimeout(50);
 check("1周（2.56秒）まつまでは押せない（論文 p.625）", await p.evaluate(() => __km.ph()) === "spin" && await p.locator("#press[disabled]").count() === 1);
 const moved = await p.evaluate(async () => { const d = document.querySelector("#dial .dot"), x = +d.getAttribute("cx"), y = +d.getAttribute("cy"); await new Promise((r) => setTimeout(r, 300)); return Math.abs(+d.getAttribute("cx") - x) + Math.abs(+d.getAttribute("cy") - y); });
 check("回しているあいだ点が動く", moved > 1);
-const unlockMs = await p.evaluate(async (t0) => { const b = document.getElementById("press"); while (b.disabled) await new Promise((r) => setTimeout(r, 10)); return Date.now() - t0; }, spinAt);
+const unlockMs = Math.round(await p.evaluate(async () => { const b = document.getElementById("press"); while (b.disabled) await new Promise((r) => setTimeout(r, 10)); return performance.now() - window.__spinAt; }));
 check("1周たつと押せる（回してから2.56秒より前には押せない。押すまで待つ。時間制限なし）", await p.locator("#press:not([disabled])").count() === 1 && unlockMs >= 2560 && unlockMs < 6000, `${unlockMs}ms`);
 await p.waitForTimeout(1500);
 check("押せるようになってから時間がたっても、待ち続ける", await p.evaluate(() => __km.ph()) === "spin");
